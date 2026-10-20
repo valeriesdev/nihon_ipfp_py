@@ -42,7 +42,6 @@ for i in tabs_munilevel:
                               f"cache/YMNK_{i}.csv", force_refresh)
 
 end_time = time.perf_counter()
-# Calculate elapsed time
 load_elapsed_time = end_time - load_start_time
 print(f"\nData load executed in: {load_elapsed_time:.6f} seconds")
 print("Starting data processing for IPFP")
@@ -65,66 +64,33 @@ age_idx = {v: i for i, v in enumerate(ages)}
 ind_idx = {v: i for i, v in enumerate(inds)}
 occ_idx = {v: i for i, v in enumerate(occs)}
 
-X_ages = cp.full(
-    (len(sexes), len(municipalities), len(ages)),
-    cp.nan
-)
-
-X_inds = cp.full(
-    (len(sexes), len(municipalities), len(inds)),
-    cp.nan
-)
-
-X_occs = cp.full(
-    (len(sexes), len(municipalities), len(occs)),
-    cp.nan
-)
+X_ages = cp.full((len(sexes), len(municipalities), len(ages)),cp.nan)
+X_inds = cp.full((len(sexes), len(municipalities), len(inds)),cp.nan)
+X_occs = cp.full((len(sexes), len(municipalities), len(occs)),cp.nan)
 
 # Populate the array
 for (sex, muni), data in munidata["男女_年齢_人口"].items():
     for age in ages:
         value = data.get(age, cp.nan)
-
-        X_ages[
-            sex_idx[sex],
-            muni_idx[muni],
-            age_idx[age]
-        ] = float(value) if value != "-" and value != 'X' else 0.0
+        X_ages[sex_idx[sex], muni_idx[muni], age_idx[age]
+               ] = float(value) if value != "-" and value != 'X' else 0.0
 
 for (sex, muni), data in munidata["男女_産業_職業者数"].items():
     for ind in inds:
         value = data.get(ind, cp.nan)
-
-        X_inds[
-            sex_idx[sex],
-            muni_idx[muni],
-            ind_idx[ind]
-        ] = float(value) if value != "-" and value != 'X' else 0.0
+        X_inds[sex_idx[sex], muni_idx[muni], ind_idx[ind]
+               ] = float(value) if value != "-" and value != 'X' else 0.0
 
 for (sex, muni), data in munidata["男女_職業_職業者数"].items():
     for occ in occs:
         value = data.get(occ, cp.nan)
+        X_occs[sex_idx[sex], muni_idx[muni], occ_idx[occ]
+               ] = float(value) if value != "-" and value != 'X' else 0.0
 
-        X_occs[
-            sex_idx[sex],
-            muni_idx[muni],
-            occ_idx[occ]
-        ] = float(value) if value != "-" and value != 'X' else 0.0
-
-
-exclude = {0,5,6}
-X_pref = cp.full(
-    (len(sexes), len(ages), len(inds), len(occs)),
-    cp.nan
-)
-
+X_pref = cp.full((len(sexes), len(ages), len(inds), len(occs)), cp.nan)
 for (ign1, sex, age, ind, occ, ign2, ign3), data in prefdata['男女_年齢_職業_産業'].items():
-    X_pref[
-        sex_idx[sex],
-        age_idx[age],
-        ind_idx[ind],
-        occ_idx[occ]
-    ] = float(data) if data != "-" and data != 'X' and data is not None else 0.0
+    X_pref[sex_idx[sex], age_idx[age], ind_idx[ind], occ_idx[occ]
+           ] = float(data) if data != "-" and data != 'X' and data is not None else 0.0
 
 
 end_time = time.perf_counter()
