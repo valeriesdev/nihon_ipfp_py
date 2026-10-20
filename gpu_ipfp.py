@@ -184,7 +184,7 @@ def gpu_ipfp(
     # Main IPFP loop
     for iteration in range(1, max_iter + 1):
 
-        for c in constraints:
+        for j, c in enumerate(constraints):
 
             target = c["target"]
             axes = c["axes"]
@@ -204,25 +204,35 @@ def gpu_ipfp(
             impossible = (current == 0) & (target > 0)
 
             if bool(cp.any(impossible).item()):
+                locations = cp.argwhere(impossible)
+
+                print(f"\nError at iteration {iteration}")
+                print(f"Constraint: {j}")
+                print(f"Dimensions: {dimensions[j]}")
+                print(f"Number of impossible cells: {len(locations)}")
+
+                for idx in locations[:10].get():
+                    idx = tuple(int(x) for x in idx)
+                    print(
+                        f"Index: {idx}",
+                        f"Target: {float(target[idx])}",
+                        f"Current: {float(current[idx])}"
+                    )
+
                 raise ValueError(
-                    "Positive target has zero support in "
-                    "the current distribution"
+                    f"Constraint {j} has positive targets with zero support"
                 )
 
             # Calculate proportional adjustment
-            cp.divide(
-                target,
-                current,
-                out=factor,
-                where=current != 0
-            )
+            # Avoid division by zero
+            cp.maximum(current, 1e-300, out=factor)
 
-            # If current = target = 0, leave the factor at 1
-            cp.copyto(
-                factor,
-                1.0,
-                where=current == 0
-            )
+            # Calculate adjustment factors
+            cp.divide(target, factor, out=factor)
+
+            # Where both current and target are zero,
+            # use a factor of 1
+            cp.copyto(factor, 1.0, where=current == 0)
 
             # Apply adjustment in place
             cp.multiply(X, factor, out=X)

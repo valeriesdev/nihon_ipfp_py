@@ -80,7 +80,7 @@ def process_db(lst, tabs_preflevel, tabs_preflevel_chop, tabs_preflevel_reps):
 
         lst_processed = {
             tuple(row[col] for col in index_cols):
-                int(row["$"]) if row["$"].isdigit() else None
+                int(row["$"]) if row["$"].isdigit() else 0
             for row in lst_processed
         }
     return lst_processed

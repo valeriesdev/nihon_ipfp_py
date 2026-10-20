@@ -70,11 +70,11 @@ def process_url(lst, tabs_munilevel_chop, remrows, remcols, mergecols, headers, 
             pd.to_numeric, errors="coerce"
         ).sum(axis=1, min_count=1)
 
-    # Remove specified columns
-    lst = lst.drop(columns=lst.columns[list(remcols)])
-
     # Remove specified rows by position
     lst = lst.drop(index=lst.index[list(remrows)])
+
+    # Remove specified columns
+    lst = lst.drop(columns=lst.columns[list(remcols)])
 
     # Reset row indices
     lst = lst.reset_index(drop=True)
@@ -87,15 +87,18 @@ def process_url(lst, tabs_munilevel_chop, remrows, remcols, mergecols, headers, 
     lst = {k: v for k, v in lst.items() if k[2] != "-"}
 
     # Remove higher level classifications
-    lastmunis = {k[2] for k in lst}
+    lst_t = list(lst.items())
+    lst_t.append(lst_t[0])
     lst = {
-        k: v for k, v in lst.items()
-        if not any(other.startswith(k[2]) and k[2] != other for other in lastmunis)
+        k1: v1 for (k1, v1), (k2, v2) in zip(lst_t, lst_t[1:])
+        if int(v1["temp_level"]) >= int(v2["temp_level"]) or not k2[2].startswith(k1[2])
     }
+    #if lst_t:
+    #    lst[lst_t[-1][0]] = lst_t[-1][1]
 
     # - to 0
     lst = {
-        k: {col: 0 if x == "-" else x for col, x in v.items()}
+        k: {col: 0 if x == "-" or x == 'X' or x is None or x != x else x for col, x in v.items()}
         for k, v in lst.items()
     }
 

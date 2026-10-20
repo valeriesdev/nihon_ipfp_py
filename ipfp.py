@@ -48,7 +48,7 @@ print("Starting data processing for IPFP")
 proc_start_time = time.perf_counter()
 
 # Columns to exclude
-exclude = {"秘匿処理", "秘匿先情報", "合算地域", "総数"}
+exclude = {"temp_level", "秘匿処理", "秘匿先情報", "合算地域", "総数"}
 
 # Extract unique dimension labels
 sexes = sorted({k[0] for k in munidata["男女_年齢_人口"]})
@@ -92,13 +92,59 @@ for (ign1, sex, age, ind, occ, ign2, ign3), data in prefdata['男女_年齢_職�
     X_pref[sex_idx[sex], age_idx[age], ind_idx[ind], occ_idx[occ]
            ] = float(data) if data != "-" and data != 'X' and data is not None else 0.0
 
+old_sum = X_occs.sum()
+X_occs = (X_occs / X_occs.sum())*old_sum
+X_inds = (X_inds / X_inds.sum())*old_sum
+#X_ages = (X_ages / X_ages.sum())*old_sum
+X_pref = (X_pref / X_pref.sum())*old_sum
 
 end_time = time.perf_counter()
-# Calculate elapsed time
 proc_elapsed_time = end_time - proc_start_time
 print(f"\nData process executed in: {load_elapsed_time:.6f} seconds")
 print(f"Total execution time in: {(end_time - total_start_time):.6f} seconds")
 
+print("Starting IPFP!")
 ipfp_start_time = time.perf_counter()
+
+aggregates = [
+    #X_ages,
+    X_inds,
+    X_occs,
+    X_pref
+]
+
+dimensions = [
+    #(0, 1, 2),      # Sex x Neighborhood × Age
+    (0, 1, 3),      # Sex x Neighborhood × Industry
+    (0, 1, 4),      # Sex x Neighborhood × Occupation
+    (0, 2, 3, 4)    # Sex × Age × Industry × Occupation
+]
+
+S, A, I, O = X_pref.shape
+N = len(municipalities)
+ # For dimension order (S, N, A, I, O)
+epsilon = 0 # 1e-8
+X = cp.broadcast_to(
+     X_pref[:, None, :, :, :] + epsilon,
+     (S, N, A, I, O)
+).copy()
+
+
+result, converged, history = gpu_ipfp(
+    original=X,
+    aggregates=aggregates,
+    dimensions=dimensions,
+    max_iter=5000,
+    tol=1e-10,
+    check_every=500,
+    dtype=cp.float64,
+    return_history=True,
+    verbose=True
+)
+
+end_time = time.perf_counter()
+ipfp_elapsed_time = end_time - ipfp_start_time
+print(f"\IPFP process executed in: {ipfp_elapsed_time:.6f} seconds")
+print(f"Total execution time in: {(end_time - total_start_time):.6f} seconds")
 
 breakpoint
