@@ -118,13 +118,13 @@ X_pref = cp.full(
     cp.nan
 )
 
-for (sex, age, ind, occ), data in prefdata['男女_年齢_職業_産業'].items():
-    X_occs[
+for (ign1, sex, age, ind, occ, ign2, ign3), data in prefdata['男女_年齢_職業_産業'].items():
+    X_pref[
         sex_idx[sex],
         age_idx[age],
         ind_idx[ind],
         occ_idx[occ]
-    ] = float(value) if value != "-" and value != 'X' else 0.0
+    ] = float(data) if data != "-" and data != 'X' and data is not None else 0.0
 
 
 end_time = time.perf_counter()
@@ -132,6 +132,7 @@ end_time = time.perf_counter()
 proc_elapsed_time = end_time - proc_start_time
 print(f"\nData process executed in: {load_elapsed_time:.6f} seconds")
 print(f"Total execution time in: {(end_time - total_start_time):.6f} seconds")
-process_start_time = time.perf_counter()
+
+ipfp_start_time = time.perf_counter()
 
 breakpoint
