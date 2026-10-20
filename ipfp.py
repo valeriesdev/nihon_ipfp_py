@@ -1,0 +1,137 @@
+from get_prefdata import load_db, process_db
+from get_munidata import load_url, process_url
+from tabs import *
+from gpu_ipfp import gpu_ipfp
+
+import numpy as np
+import cupy as cp
+import time
+
+force_refresh = False
+
+app_id = "8c1856560dde0c0a6cb33e7b1a67fb72bfa85ec0"
+year = "2020"
+prefs = {"YMNK" : "19"}
+tabs_preflevel = {"男女_年齢_職業_産業":"0003450560"}
+tabs_munilevel = {
+    "男女_年齢_人口":"男女，年齢（5歳階級）別人口，平均年齢及び総年齢－町丁・字等", # age
+    "男女_産業_職業者数":"男女，産業（大分類）別就業者数（15歳以上）－町丁・字等", # industry
+    "男女_職業_職業者数":"男女，職業（大分類）別就業者数（15歳以上）－町丁・字等" # occupaton
+}
+
+print("Starting data loading")
+total_start_time = time.perf_counter()
+load_start_time = time.perf_counter()
+
+prefdata = {}
+for i in tabs_preflevel:
+    prefdata[i] = load_db(app_id, tabs_preflevel[i], year, prefs["YMNK"], f"cache/YMNK_{i}.json", force_refresh)
+    prefdata[i] = process_db(prefdata[i], tabs_preflevel, tabs_preflevel_chop, tabs_preflevel_reps)
+
+muniurls = {}
+munidata = {}
+for i in tabs_munilevel:
+    muniurls[i] = load_url(app_id, 0, year, tabs_munilevel[i], prefs["YMNK"], f"cache/YMNK_{i}.json", force_refresh)
+    munidata[i] = process_url(muniurls[i], 
+                              tabs_munilevel_chop[i], 
+                              tabs_munilevel_remrows[i], 
+                              tabs_munilevel_remcols[i], 
+                              tabs_munilevel_mergecols[i], 
+                              tabs_munilevel_headers[i],
+                              tabs_munilevel_indices[i],
+                              f"cache/YMNK_{i}.csv", force_refresh)
+
+end_time = time.perf_counter()
+# Calculate elapsed time
+load_elapsed_time = end_time - load_start_time
+print(f"\nData load executed in: {load_elapsed_time:.6f} seconds")
+print("Starting data processing for IPFP")
+proc_start_time = time.perf_counter()
+
+# Columns to exclude
+exclude = {"秘匿処理", "秘匿先情報", "合算地域", "総数"}
+
+# Extract unique dimension labels
+sexes = sorted({k[0] for k in munidata["男女_年齢_人口"]})
+municipalities = sorted({k[1] for k in munidata["男女_年齢_人口"]})
+ages = [a for a in next(iter(munidata["男女_年齢_人口"].values())) if a not in exclude]
+inds = [a for a in next(iter(munidata["男女_産業_職業者数"].values())) if a not in exclude]
+occs = [a for a in next(iter(munidata["男女_職業_職業者数"].values())) if a not in exclude]
+
+# Create lookup dictionaries
+sex_idx = {v: i for i, v in enumerate(sexes)}
+muni_idx = {v: i for i, v in enumerate(municipalities)}
+age_idx = {v: i for i, v in enumerate(ages)}
+ind_idx = {v: i for i, v in enumerate(inds)}
+occ_idx = {v: i for i, v in enumerate(occs)}
+
+X_ages = cp.full(
+    (len(sexes), len(municipalities), len(ages)),
+    cp.nan
+)
+
+X_inds = cp.full(
+    (len(sexes), len(municipalities), len(inds)),
+    cp.nan
+)
+
+X_occs = cp.full(
+    (len(sexes), len(municipalities), len(occs)),
+    cp.nan
+)
+
+# Populate the array
+for (sex, muni), data in munidata["男女_年齢_人口"].items():
+    for age in ages:
+        value = data.get(age, cp.nan)
+
+        X_ages[
+            sex_idx[sex],
+            muni_idx[muni],
+            age_idx[age]
+        ] = float(value) if value != "-" and value != 'X' else 0.0
+
+for (sex, muni), data in munidata["男女_産業_職業者数"].items():
+    for ind in inds:
+        value = data.get(ind, cp.nan)
+
+        X_inds[
+            sex_idx[sex],
+            muni_idx[muni],
+            ind_idx[ind]
+        ] = float(value) if value != "-" and value != 'X' else 0.0
+
+for (sex, muni), data in munidata["男女_職業_職業者数"].items():
+    for occ in occs:
+        value = data.get(occ, cp.nan)
+
+        X_occs[
+            sex_idx[sex],
+            muni_idx[muni],
+            occ_idx[occ]
+        ] = float(value) if value != "-" and value != 'X' else 0.0
+
+
+exclude = {0,5,6}
+X_pref = cp.full(
+    (len(sexes), len(ages), len(inds), len(occs)),
+    cp.nan
+)
+
+for (sex, age, ind, occ), data in prefdata['男女_年齢_職業_産業'].items():
+    X_occs[
+        sex_idx[sex],
+        age_idx[age],
+        ind_idx[ind],
+        occ_idx[occ]
+    ] = float(value) if value != "-" and value != 'X' else 0.0
+
+
+end_time = time.perf_counter()
+# Calculate elapsed time
+proc_elapsed_time = end_time - proc_start_time
+print(f"\nData process executed in: {load_elapsed_time:.6f} seconds")
+print(f"Total execution time in: {(end_time - total_start_time):.6f} seconds")
+process_start_time = time.perf_counter()
+
+breakpoint
