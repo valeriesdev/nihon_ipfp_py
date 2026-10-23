@@ -2,8 +2,8 @@ from get_prefdata import load_db, process_db
 from get_munidata import load_url, process_url
 from tabs import *
 from gpu_ipfp import gpu_ipfp
+from kmeans import gpu_kmeans
 
-import numpy as np
 import cupy as cp
 import time
 
@@ -73,48 +73,84 @@ for (sex, muni), data in munidata["男女_年齢_人口"].items():
     for age in ages:
         value = data.get(age, cp.nan)
         X_ages[sex_idx[sex], muni_idx[muni], age_idx[age]
-               ] = float(value) if value != "-" and value != 'X' else 0.0
+               ] = float(value) if value != "-" else 0.0
 
 for (sex, muni), data in munidata["男女_産業_職業者数"].items():
     for ind in inds:
         value = data.get(ind, cp.nan)
         X_inds[sex_idx[sex], muni_idx[muni], ind_idx[ind]
-               ] = float(value) if value != "-" and value != 'X' else 0.0
+               ] = float(value) if value != "-" else 0.0
 
 for (sex, muni), data in munidata["男女_職業_職業者数"].items():
     for occ in occs:
         value = data.get(occ, cp.nan)
         X_occs[sex_idx[sex], muni_idx[muni], occ_idx[occ]
-               ] = float(value) if value != "-" and value != 'X' else 0.0
+               ] = float(value) if value != "-" else 0.0
 
 X_pref = cp.full((len(sexes), len(ages), len(inds), len(occs)), cp.nan)
 for (ign1, sex, age, ind, occ, ign2, ign3), data in prefdata['男女_年齢_職業_産業'].items():
     X_pref[sex_idx[sex], age_idx[age], ind_idx[ind], occ_idx[occ]
-           ] = float(data) if data != "-" and data != 'X' and data is not None else 0.0
+           ] = float(data) if data != "-" and data is not None else 0.0
 
-old_sum = X_occs.sum()
-X_occs = (X_occs / X_occs.sum())*old_sum
-X_inds = (X_inds / X_inds.sum())*old_sum
-#X_ages = (X_ages / X_ages.sum())*old_sum
-X_pref = (X_pref / X_pref.sum())*old_sum
+X_occs = (X_occs / X_occs.sum())
+X_inds = (X_inds / X_inds.sum())
+#X_ages = (X_ages / X_ages.sum())
+X_pref = (X_pref / X_pref.sum())
 
 end_time = time.perf_counter()
 proc_elapsed_time = end_time - proc_start_time
 print(f"\nData process executed in: {load_elapsed_time:.6f} seconds")
 print(f"Total execution time in: {(end_time - total_start_time):.6f} seconds")
+kmeans_start_time = time.perf_counter()
+
+def to_proportions(arr):
+    totals = arr.sum(axis=2, keepdims=True)
+    return arr / cp.where(totals == 0, 1, totals)
+
+X_locals = cp.concatenate([to_proportions(X_occs), to_proportions(X_inds)], axis=2)
+X_locals = X_locals.transpose(1, 0, 2)
+X_locals = X_locals.reshape(X_locals.shape[0], -1)
+X_locals = cp.ascontiguousarray(X_locals, dtype=cp.float32)
+
+assert bool(cp.isfinite(X_locals).all())
+
+n, d = X_locals.shape
+k = 5
+niter = 100
+nredo = 5
+tol = 1e-5
+best_inertia, best_labels, best_centroids = gpu_kmeans(n, d, k, niter, nredo, tol, X_locals)
+print(k, " Best inertia:", best_inertia)
+print(k, " Cluster sizes:", cp.bincount(best_labels, minlength=k).get())
+#for k in range(1,11):
+#    best_inertia, best_labels, best_centroids = gpu_kmeans(n, d, k, niter, nredo, tol, X_locals)
+#    print(k, " Best inertia:", best_inertia)
+#    print(k, " Cluster sizes:", cp.bincount(best_labels, minlength=k).get())
+X_occs = X_occs.reshape(X_occs.shape[0], -1)
+X_inds = X_inds.reshape(X_inds.shape[0], -1)
+X_occs_cluster = cp.array(5)
+X_inds_cluster = cp.array(5)
+
+for i, zone in enumerate(X_occs):
+    X_occs_cluster[best_labels[i]].append(X_occs[i])
+    X_inds_cluster[best_labels[i]].append(X_inds[i])
+
+X_pref_cluster = cp.array(5)
+
+
+end_time = time.perf_counter()
+kmeans_elapsed_time = end_time - kmeans_start_time
+print(f"\nKmeans process executed in: {kmeans_elapsed_time:.6f} seconds")
+print(f"Total execution time in: {(end_time - total_start_time):.6f} seconds")
 
 print("Starting IPFP!")
 ipfp_start_time = time.perf_counter()
 
-aggregates = [
-    #X_ages,
-    X_inds,
-    X_occs,
-    X_pref
-]
+aggregates = [#X_ages,
+    X_inds, X_occs, X_pref]
 
 dimensions = [
-    #(0, 1, 2),      # Sex x Neighborhood × Age
+    #(0, 1, 2),     # Sex x Neighborhood × Age
     (0, 1, 3),      # Sex x Neighborhood × Industry
     (0, 1, 4),      # Sex x Neighborhood × Occupation
     (0, 2, 3, 4)    # Sex × Age × Industry × Occupation
@@ -122,7 +158,6 @@ dimensions = [
 
 S, A, I, O = X_pref.shape
 N = len(municipalities)
- # For dimension order (S, N, A, I, O)
 epsilon = 0 # 1e-8
 X = cp.broadcast_to(
      X_pref[:, None, :, :, :] + epsilon,

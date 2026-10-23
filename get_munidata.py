@@ -93,13 +93,12 @@ def process_url(lst, tabs_munilevel_chop, remrows, remcols, mergecols, headers, 
         k1: v1 for (k1, v1), (k2, v2) in zip(lst_t, lst_t[1:])
         if int(v1["temp_level"]) >= int(v2["temp_level"]) or not k2[2].startswith(k1[2])
     }
-    #if lst_t:
-    #    lst[lst_t[-1][0]] = lst_t[-1][1]
 
     # - to 0
     lst = {
-        k: {col: 0 if x == "-" or x == 'X' or x is None or x != x else x for col, x in v.items()}
+        k: {col: 0 if x == "-" or x is None or x != x else x for col, x in v.items()}
         for k, v in lst.items()
+        if "X" not in v.values()
     }
 
     # merge muni and neighborhood
