@@ -126,14 +126,14 @@ print(k, " Cluster sizes:", cp.bincount(best_labels, minlength=k).get())
 #    best_inertia, best_labels, best_centroids = gpu_kmeans(n, d, k, niter, nredo, tol, X_locals)
 #    print(k, " Best inertia:", best_inertia)
 #    print(k, " Cluster sizes:", cp.bincount(best_labels, minlength=k).get())
-X_occs = X_occs.reshape(X_occs.shape[0], -1)
-X_inds = X_inds.reshape(X_inds.shape[0], -1)
-X_occs_cluster = cp.array(5)
-X_inds_cluster = cp.array(5)
+X_occs = X_occs.transpose(1, 0, 2).reshape(X_occs.shape[1], -1)
+X_inds = X_inds.transpose(1, 0, 2).reshape(X_inds.shape[1], -1)
+X_occs_cluster = [[],[],[],[],[]]
+X_inds_cluster = [[],[],[],[],[]]
 
 for i, zone in enumerate(X_occs):
-    X_occs_cluster[best_labels[i]].append(X_occs[i])
-    X_inds_cluster[best_labels[i]].append(X_inds[i])
+    X_occs_cluster[int(best_labels[i])].append(X_occs[i])
+    X_inds_cluster[int(best_labels[i])].append(X_inds[i])
 
 X_pref_cluster = cp.array(5)
 
