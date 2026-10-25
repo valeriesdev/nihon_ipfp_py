@@ -4,6 +4,7 @@ from tabs import *
 from gpu_ipfp import gpu_ipfp
 from kmeans import gpu_kmeans
 
+import pandas as pd
 import cupy as cp
 import time
 
@@ -122,10 +123,14 @@ tol = 1e-5
 best_inertia, best_labels, best_centroids = gpu_kmeans(n, d, k, niter, nredo, tol, X_locals)
 print(k, " Best inertia:", best_inertia)
 print(k, " Cluster sizes:", cp.bincount(best_labels, minlength=k).get())
-#for k in range(1,11):
-#    best_inertia, best_labels, best_centroids = gpu_kmeans(n, d, k, niter, nredo, tol, X_locals)
-#    print(k, " Best inertia:", best_inertia)
-#    print(k, " Cluster sizes:", cp.bincount(best_labels, minlength=k).get())
+
+cluster_df = pd.DataFrame({
+    'dist': municipalities,
+    'clus':best_labels.get()
+})
+
+cluster_df.to_csv('cluters.csv', index=False)
+
 X_occs = X_occs.transpose(1, 0, 2).reshape(X_occs.shape[1], -1)
 X_inds = X_inds.transpose(1, 0, 2).reshape(X_inds.shape[1], -1)
 X_occs_cluster = [[],[],[],[],[]]
@@ -135,37 +140,33 @@ for i, zone in enumerate(X_occs):
     X_occs_cluster[int(best_labels[i])].append(X_occs[i])
     X_inds_cluster[int(best_labels[i])].append(X_inds[i])
 
-X_pref_cluster = cp.array(5)
+local_features = []
+local_margins = [cp.full((5,2,12), cp.nan), cp.full((5,2,20), cp.nan)]
+for i in range(0,5):
+    local_features.append([])
+    local_features[i].append(cp.array(X_occs_cluster[i]).reshape(-1, 2, X_occs.shape[1]//2).transpose(1, 0, 2))
+    local_features[i].append(cp.array(X_inds_cluster[i]).reshape(-1, 2, X_inds.shape[1]//2).transpose(1, 0, 2))
+    local_margins[0][i,:,:] = local_features[i][0].sum(axis=1)
+    local_margins[1][i,:,:] = local_features[i][1].sum(axis=1)
 
+#X_pref_n = X_pref.sum(axis=2)
 
-end_time = time.perf_counter()
-kmeans_elapsed_time = end_time - kmeans_start_time
-print(f"\nKmeans process executed in: {kmeans_elapsed_time:.6f} seconds")
-print(f"Total execution time in: {(end_time - total_start_time):.6f} seconds")
-
-print("Starting IPFP!")
-ipfp_start_time = time.perf_counter()
-
-aggregates = [#X_ages,
-    X_inds, X_occs, X_pref]
-
+aggregates = [local_margins[0], local_margins[1], X_pref]
 dimensions = [
-    #(0, 1, 2),     # Sex x Neighborhood × Age
-    (0, 1, 3),      # Sex x Neighborhood × Industry
-    (0, 1, 4),      # Sex x Neighborhood × Occupation
-    (0, 2, 3, 4)    # Sex × Age × Industry × Occupation
+    (0, 1, 4),      # Sex x Neighborhood × Industry
+    (0, 1, 3),      # Sex x Neighborhood × Occupation
+    (1, 2, 3, 4)    # Sex × Age × Industry × Occupation
 ]
 
 S, A, I, O = X_pref.shape
-N = len(municipalities)
+N = len(local_margins[0])
 epsilon = 0 # 1e-8
 X = cp.broadcast_to(
-     X_pref[:, None, :, :, :] + epsilon,
-     (S, N, A, I, O)
+     X_pref[None, :, :, :, :] + epsilon,
+     (N, S, A, I, O)
 ).copy()
 
-
-result, converged, history = gpu_ipfp(
+clustered_table, converged, history = gpu_ipfp(
     original=X,
     aggregates=aggregates,
     dimensions=dimensions,
@@ -174,8 +175,76 @@ result, converged, history = gpu_ipfp(
     check_every=500,
     dtype=cp.float64,
     return_history=True,
-    verbose=True
+    verbose=False
 )
+
+target = local_margins[0].sum(axis=2)  # (cluster, sex)
+current = clustered_table.sum(axis=(2, 3, 4))  # (cluster, sex)
+scale = target / cp.where(current == 0, 1, current)
+clustered_table *= scale[:, :, None, None, None]
+
+end_time = time.perf_counter()
+kmeans_elapsed_time = end_time - kmeans_start_time
+print(f"\nClustering process executed in: {kmeans_elapsed_time:.6f} seconds")
+print(f"Total execution time in: {(end_time - total_start_time):.6f} seconds")
+
+print("Starting IPFP!")
+ipfp_start_time = time.perf_counter()
+
+results = []
+for i in range(0,5):
+    print(f"\nippf on cluster {i}")
+    occ = local_features[i][0]  # (sex, municipality, occupation)
+    ind = local_features[i][1]  # (sex, municipality, industry)
+
+    joint = clustered_table[i].copy()  # (sex, age, industry, occupation)
+
+    support = (
+        (ind > 0)[:, :, :, None] &
+        (occ > 0)[:, :, None, :]
+    ).any(axis=1)  # (sex, industry, occupation)
+
+    # Remove impossible industry–occupation combinations
+    joint = cp.where(support[:, None, :, :], joint, 0)
+
+    # Restore each sex's original total
+    target = ind.sum(axis=(1, 2), keepdims=True)
+    current = joint.sum(axis=(1, 2, 3), keepdims=True)
+
+    joint *= (
+        target.reshape(-1, 1, 1, 1)
+        / cp.where(current == 0, 1, current)
+    )
+
+    aggregates = [local_features[i][0], local_features[i][1], joint]
+
+    dimensions = [
+        #(0, 1, 2),     # Sex x Neighborhood × Age
+        (0, 1, 4),      # Sex x Neighborhood × Industry
+        (0, 1, 3),      # Sex x Neighborhood × Occupation
+        (0, 2, 3, 4)    # Sex × Age × Industry × Occupation
+    ]
+
+    S, A, I, O = clustered_table[i,:,:,:,:].shape
+    N = local_features[i][0].shape[1]
+    epsilon = 1e-12
+    X = cp.broadcast_to(
+        clustered_table[i][:, None, :, :, :],
+        (S, N, A, I, O)
+    ).copy()
+    X = cp.maximum(X, epsilon)
+    results.append([])
+    results[i], converged, history = gpu_ipfp(
+        original=X,
+        aggregates=aggregates,
+        dimensions=dimensions,
+        max_iter=5000,
+        tol=1e-10,
+        check_every=1000,
+        dtype=cp.float64,
+        return_history=True,
+        verbose=True
+    )
 
 end_time = time.perf_counter()
 ipfp_elapsed_time = end_time - ipfp_start_time
