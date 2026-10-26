@@ -6,3 +6,4 @@ enter/
 archives/
 *.csv
 environment.yml
+*.env

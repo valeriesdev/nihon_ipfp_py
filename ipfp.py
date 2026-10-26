@@ -7,10 +7,13 @@ from kmeans import gpu_kmeans
 import pandas as pd
 import cupy as cp
 import time
+import os
+from dotenv import load_dotenv
 
-force_refresh = False
+force_refresh = True
 
-app_id = "8c1856560dde0c0a6cb33e7b1a67fb72bfa85ec0"
+load_dotenv("api_key.env") 
+app_id = os.getenv('estat_API')
 year = "2020"
 prefs = {"YMNK" : "19"}
 tabs_preflevel = {"男女_年齢_職業_産業":"0003450560"}
