@@ -3,3 +3,6 @@ build/
 cache/
 __pycache__/
 enter/
+archives/
+*.csv
+environment.yml

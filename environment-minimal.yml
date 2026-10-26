@@ -1,0 +1,10 @@
+name: synthpop
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - cuda-version=12.6
+  - cupy
+  - requests
+  - pandas
+  - faiss-gpu=1.13.2=py3.11_h1b31e9c_0_cuda12.6

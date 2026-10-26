@@ -45,7 +45,7 @@ for i in tabs_munilevel:
 end_time = time.perf_counter()
 load_elapsed_time = end_time - load_start_time
 print(f"\nData load executed in: {load_elapsed_time:.6f} seconds")
-print("Starting data processing for IPFP")
+print("Starting data processing for K-means")
 proc_start_time = time.perf_counter()
 
 # Columns to exclude
@@ -69,39 +69,29 @@ X_ages = cp.full((len(sexes), len(municipalities), len(ages)),cp.nan)
 X_inds = cp.full((len(sexes), len(municipalities), len(inds)),cp.nan)
 X_occs = cp.full((len(sexes), len(municipalities), len(occs)),cp.nan)
 
-# Populate the array
-for (sex, muni), data in munidata["男女_年齢_人口"].items():
-    for age in ages:
-        value = data.get(age, cp.nan)
-        X_ages[sex_idx[sex], muni_idx[muni], age_idx[age]
-               ] = float(value) if value != "-" else 0.0
-
-for (sex, muni), data in munidata["男女_産業_職業者数"].items():
-    for ind in inds:
-        value = data.get(ind, cp.nan)
-        X_inds[sex_idx[sex], muni_idx[muni], ind_idx[ind]
-               ] = float(value) if value != "-" else 0.0
-
-for (sex, muni), data in munidata["男女_職業_職業者数"].items():
-    for occ in occs:
-        value = data.get(occ, cp.nan)
-        X_occs[sex_idx[sex], muni_idx[muni], occ_idx[occ]
-               ] = float(value) if value != "-" else 0.0
+rel_idxs = [age_idx, ind_idx, occ_idx]
+rel_tables = [X_ages, X_inds, X_occs]
+for i, key in enumerate(munidata.keys()):
+    for (a,b), data in munidata[key].items():
+        for idx in rel_idxs[i]:
+            value = data.get(idx, cp.nan)
+            rel_tables[i][sex_idx[a], muni_idx[b], rel_idxs[i][idx]
+                   ] = float(value) if value != "-" else 0.0
 
 X_pref = cp.full((len(sexes), len(ages), len(inds), len(occs)), cp.nan)
 for (ign1, sex, age, ind, occ, ign2, ign3), data in prefdata['男女_年齢_職業_産業'].items():
     X_pref[sex_idx[sex], age_idx[age], ind_idx[ind], occ_idx[occ]
            ] = float(data) if data != "-" and data is not None else 0.0
 
+old_sum = X_inds.sum()
 X_occs = (X_occs / X_occs.sum())
 X_inds = (X_inds / X_inds.sum())
-#X_ages = (X_ages / X_ages.sum())
 X_pref = (X_pref / X_pref.sum())
 
 end_time = time.perf_counter()
 proc_elapsed_time = end_time - proc_start_time
-print(f"\nData process executed in: {load_elapsed_time:.6f} seconds")
-print(f"Total execution time in: {(end_time - total_start_time):.6f} seconds")
+print(f"\nData process executed in: {proc_elapsed_time:.6f} seconds")
+print("Starting K-means")
 kmeans_start_time = time.perf_counter()
 
 def to_proportions(arr):
@@ -166,6 +156,12 @@ X = cp.broadcast_to(
      (N, S, A, I, O)
 ).copy()
 
+end_time = time.perf_counter()
+kmeans_elapsed_time = end_time - kmeans_start_time
+print(f"\nK-means executed in: {kmeans_elapsed_time:.6f} seconds")
+print("Starting IPFP Clustering")
+kmeans_ipfp_start_time = time.perf_counter()
+
 clustered_table, converged, history = gpu_ipfp(
     original=X,
     aggregates=aggregates,
@@ -184,11 +180,9 @@ scale = target / cp.where(current == 0, 1, current)
 clustered_table *= scale[:, :, None, None, None]
 
 end_time = time.perf_counter()
-kmeans_elapsed_time = end_time - kmeans_start_time
-print(f"\nClustering process executed in: {kmeans_elapsed_time:.6f} seconds")
-print(f"Total execution time in: {(end_time - total_start_time):.6f} seconds")
-
-print("Starting IPFP!")
+kmeans_elapsed_time = end_time - kmeans_ipfp_start_time
+print(f"\nIPFP Clustering process executed in: {kmeans_elapsed_time:.6f} seconds")
+print("Starting Second-stage IPFP")
 ipfp_start_time = time.perf_counter()
 
 results = []
@@ -248,7 +242,33 @@ for i in range(0,5):
 
 end_time = time.perf_counter()
 ipfp_elapsed_time = end_time - ipfp_start_time
-print(f"\IPFP process executed in: {ipfp_elapsed_time:.6f} seconds")
+print(f"\nIPFP process executed in: {ipfp_elapsed_time:.6f} seconds")
 print(f"Total execution time in: {(end_time - total_start_time):.6f} seconds")
 
 breakpoint
+
+error_tbl = [[],[]]
+curr_muni = [0,0,0,0,0]
+share = [[],[]]
+for i,lbl in enumerate(best_labels):
+    a_tbl = results[int(lbl)].sum(axis=(2,3))[:,curr_muni[int(lbl)],:]
+    b_tbl = results[int(lbl)].sum(axis=(2,4))[:,curr_muni[int(lbl)],:]
+    error_tbl[0].append(
+        float(cp.sqrt(cp.mean((a_tbl - local_features[int(lbl)][0][:,curr_muni[int(lbl)],:]) ** 2))))
+    error_tbl[1].append(
+        float(cp.sqrt(cp.mean((b_tbl - local_features[int(lbl)][1][:,curr_muni[int(lbl)],:]) ** 2))))
+    share[0].append(local_features[int(lbl)][0][:,curr_muni[int(lbl)],:].sum()*old_sum)
+    share[1].append(local_features[int(lbl)][1][:,curr_muni[int(lbl)],:].sum()*old_sum)
+    curr_muni[int(lbl)] += 1
+
+error_totals = pd.DataFrame({
+    'dist': municipalities,
+    'clus': best_labels.get(),
+    'epop1':share[0],
+    'epop2':share[1],
+    'kpop': (X_inds.sum(axis=1)*old_sum).get(),
+    'erra': error_tbl[0],
+    'errb': error_tbl[1],
+})
+
+error_totals.to_csv('errors_c.csv', index=False)
